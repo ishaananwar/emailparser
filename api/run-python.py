@@ -103,7 +103,7 @@ class EmailTicketParser:
 
     def process_emails(self):
         """Process unread emails and create tickets"""
-        with self.imap_connection() as imap:
+        with self.connect() as imap:
             try:
                 # Select inbox
                 status, messages = imap.select("INBOX")
