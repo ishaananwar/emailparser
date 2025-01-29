@@ -10,7 +10,7 @@
     <p id="output"></p>
 
     <script>
-        document.getElementById('run-python').addEventListener('click', async () => {
+        document.addEventListener("DOMContentLoaded", async () => {
             const response = await fetch('/api/run-python');
             const data = await response.text();
             document.getElementById('output').innerText = data;
