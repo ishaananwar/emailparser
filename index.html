@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Static Site</title>
+</head>
+<body>
+    <button id="run-python">Run Python Script</button>
+    <p id="output"></p>
+
+    <script>
+        document.getElementById('run-python').addEventListener('click', async () => {
+            const response = await fetch('/api/run-python');
+            const data = await response.text();
+            document.getElementById('output').innerText = data;
+        });
+    </script>
+</body>
+</html>
