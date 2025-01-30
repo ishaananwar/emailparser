@@ -6,6 +6,8 @@ from typing import Dict, Any
 import os
 from flask import Flask, jsonify
 from contextlib import contextmanager
+import time
+import random
 
 class EmailTicketParser:
     def __init__(self, imap_host: str, username: str, password: str, webhook_url: str):
@@ -17,26 +19,60 @@ class EmailTicketParser:
             "noreply@ingeniumstem.org",
             "Mailer-Daemon@mx1.mxfilter.net"
         ]
+        self._lock = False
+        self._last_connection_time = 0
+        self.MIN_CONNECTION_INTERVAL = 2  # Minimum seconds between connections
+
+    def _wait_for_connection(self):
+        """Implement connection rate limiting"""
+        while self._lock:
+            time.sleep(0.5)
+        
+        time_since_last = time.time() - self._last_connection_time
+        if time_since_last < self.MIN_CONNECTION_INTERVAL:
+            time.sleep(self.MIN_CONNECTION_INTERVAL - time_since_last)
 
     @contextmanager
-    def connect(self):
-        """Context manager for handling IMAP connections"""
+    def imap_connection(self, max_retries=3):
+        """Context manager for handling IMAP connections with retry logic"""
+        self._wait_for_connection()
+        self._lock = True
         imap = None
-        try:
-            print("Connecting to IMAP server...")
-            imap = imaplib.IMAP4_SSL(self.imap_host, 993)
-            imap.login(self.username, self.password)
-            yield imap
-        finally:
-            if imap:
-                try:
-                    imap.close()
-                except:
-                    pass
-                try:
-                    imap.logout()
-                except:
-                    pass
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                print(f"Connecting to IMAP server (attempt {retry_count + 1})...")
+                imap = imaplib.IMAP4_SSL(self.imap_host, 993)
+                imap.login(self.username, self.password)
+                self._last_connection_time = time.time()
+                yield imap
+                break
+            except OSError as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    raise
+                wait_time = random.uniform(1, 3) * retry_count
+                print(f"Connection failed. Retrying in {wait_time:.1f} seconds...")
+                time.sleep(wait_time)
+                if imap:
+                    try:
+                        imap.logout()
+                    except:
+                        pass
+            except Exception as e:
+                raise
+            finally:
+                if imap:
+                    try:
+                        imap.close()
+                    except:
+                        pass
+                    try:
+                        imap.logout()
+                    except:
+                        pass
+                self._lock = False
 
     def decode_email_header(self, header: str) -> str:
         """Decode email header"""
@@ -103,8 +139,8 @@ class EmailTicketParser:
 
     def process_emails(self):
         """Process unread emails and create tickets"""
-        with self.connect() as imap:
-            try:
+        try:
+            with self.imap_connection() as imap:
                 # Select inbox
                 status, messages = imap.select("INBOX")
                 if status != 'OK':
@@ -157,35 +193,26 @@ class EmailTicketParser:
                         print(f"Error processing message {num}: {e}")
                         continue
 
-            except Exception as e:
-                print(f"Error during email processing: {e}")
-
-            finally:
-                # Cleanup
-                try:
-                    imap.close()
-                except:
-                    pass
-                try:
-                    imap.logout()
-                except:
-                    pass
+        except Exception as e:
+            print(f"Error during email processing: {e}")
 
 config = {
-        "imap_host"   : os.getenv("IMAP_HOST"),
-        "username"    : os.getenv("USERNAME"),
-        "password"    : os.getenv("PASSWORD"),
-        "webhook_url" : os.getenv("WEBHOOK_URL")
-    }
+    "imap_host": os.getenv("IMAP_HOST"),
+    "username": os.getenv("USERNAME"),
+    "password": os.getenv("PASSWORD"),
+    "webhook_url": os.getenv("WEBHOOK_URL")
+}
 
 app = Flask(__name__)
 
 @app.route('/api/run-python')
 def run_script():
-    parser = EmailTicketParser(**config)
-    parser.process_emails()
-    result = "Execution finished"
-    return jsonify(result)
+    try:
+        parser = EmailTicketParser(**config)
+        parser.process_emails()
+        return jsonify({"status": "success", "message": "Execution finished"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == '__main__':
     app.run()
